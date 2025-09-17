@@ -1,7 +1,7 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Block modules."""
 
-from __future__ import annotations
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
-from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad
+from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad, CoordAtt 
 from .transformer import TransformerBlock
 
 __all__ = (
@@ -192,7 +192,7 @@ class HGBlock(nn.Module):
 class SPP(nn.Module):
     """Spatial Pyramid Pooling (SPP) layer https://arxiv.org/abs/1406.4729."""
 
-    def __init__(self, c1: int, c2: int, k: tuple[int, ...] = (5, 9, 13)):
+    def __init__(self, c1: int, c2: int, k: Tuple[int, ...] = (5, 9, 13)):
         """
         Initialize the SPP layer with input/output channels and pooling kernel sizes.
 
@@ -471,7 +471,7 @@ class Bottleneck(nn.Module):
     """Standard bottleneck."""
 
     def __init__(
-        self, c1: int, c2: int, shortcut: bool = True, g: int = 1, k: tuple[int, int] = (3, 3), e: float = 0.5
+        self, c1: int, c2: int, shortcut: bool = True, g: int = 1, k: Tuple[int, int] = (3, 3), e: float = 0.5
     ):
         """
         Initialize a standard bottleneck module.
@@ -711,7 +711,7 @@ class ImagePoolingAttn(nn.Module):
     """ImagePoolingAttn: Enhance the text embeddings with image-aware information."""
 
     def __init__(
-        self, ec: int = 256, ch: tuple[int, ...] = (), ct: int = 512, nh: int = 8, k: int = 3, scale: bool = False
+        self, ec: int = 256, ch: Tuple[int, ...] = (), ct: int = 512, nh: int = 8, k: int = 3, scale: bool = False
     ):
         """
         Initialize ImagePoolingAttn module.
@@ -740,12 +740,12 @@ class ImagePoolingAttn(nn.Module):
         self.hc = ec // nh
         self.k = k
 
-    def forward(self, x: list[torch.Tensor], text: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: List[torch.Tensor], text: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of ImagePoolingAttn.
 
         Args:
-            x (list[torch.Tensor]): List of input feature maps.
+            x (List[torch.Tensor]): List of input feature maps.
             text (torch.Tensor): Text embeddings.
 
         Returns:
@@ -856,7 +856,7 @@ class RepBottleneck(Bottleneck):
     """Rep bottleneck."""
 
     def __init__(
-        self, c1: int, c2: int, shortcut: bool = True, g: int = 1, k: tuple[int, int] = (3, 3), e: float = 0.5
+        self, c1: int, c2: int, shortcut: bool = True, g: int = 1, k: Tuple[int, int] = (3, 3), e: float = 0.5
     ):
         """
         Initialize RepBottleneck.
@@ -1026,13 +1026,13 @@ class SPPELAN(nn.Module):
 class CBLinear(nn.Module):
     """CBLinear."""
 
-    def __init__(self, c1: int, c2s: list[int], k: int = 1, s: int = 1, p: int | None = None, g: int = 1):
+    def __init__(self, c1: int, c2s: List[int], k: int = 1, s: int = 1, p: Optional[int] = None, g: int = 1):
         """
         Initialize CBLinear module.
 
         Args:
             c1 (int): Input channels.
-            c2s (list[int]): List of output channel sizes.
+            c2s (List[int]): List of output channel sizes.
             k (int): Kernel size.
             s (int): Stride.
             p (int | None): Padding.
@@ -1042,7 +1042,7 @@ class CBLinear(nn.Module):
         self.c2s = c2s
         self.conv = nn.Conv2d(c1, sum(c2s), k, s, autopad(k, p), groups=g, bias=True)
 
-    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
         """Forward pass through CBLinear layer."""
         return self.conv(x).split(self.c2s, dim=1)
 
@@ -1050,22 +1050,22 @@ class CBLinear(nn.Module):
 class CBFuse(nn.Module):
     """CBFuse."""
 
-    def __init__(self, idx: list[int]):
+    def __init__(self, idx: List[int]):
         """
         Initialize CBFuse module.
 
         Args:
-            idx (list[int]): Indices for feature selection.
+            idx (List[int]): Indices for feature selection.
         """
         super().__init__()
         self.idx = idx
 
-    def forward(self, xs: list[torch.Tensor]) -> torch.Tensor:
+    def forward(self, xs: List[torch.Tensor]) -> torch.Tensor:
         """
         Forward pass through CBFuse layer.
 
         Args:
-            xs (list[torch.Tensor]): List of input tensors.
+            xs (List[torch.Tensor]): List of input tensors.
 
         Returns:
             (torch.Tensor): Fused output tensor.
@@ -1676,7 +1676,7 @@ class TorchVision(nn.Module):
             x (torch.Tensor): Input tensor.
 
         Returns:
-            (torch.Tensor | list[torch.Tensor]): Output tensor or list of tensors.
+            (torch.Tensor | List[torch.Tensor]): Output tensor or list of tensors.
         """
         if self.split:
             y = [x]
@@ -1921,7 +1921,7 @@ class A2C2f(nn.Module):
         y.extend(m(y[-1]) for m in self.m)
         y = self.cv2(torch.cat(y, 1))
         if self.gamma is not None:
-            return x + self.gamma.view(-1, self.gamma.shape[0], 1, 1) * y
+            return x + self.gamma.view(-1, len(self.gamma), 1, 1) * y
         return y
 
 
@@ -1974,12 +1974,12 @@ class Residual(nn.Module):
 class SAVPE(nn.Module):
     """Spatial-Aware Visual Prompt Embedding module for feature enhancement."""
 
-    def __init__(self, ch: list[int], c3: int, embed: int):
+    def __init__(self, ch: List[int], c3: int, embed: int):
         """
         Initialize SAVPE module with channels, intermediate channels, and embedding dimension.
 
         Args:
-            ch (list[int]): List of input channel dimensions.
+            ch (List[int]): List of input channel dimensions.
             c3 (int): Intermediate channels.
             embed (int): Embedding dimension.
         """
@@ -2002,7 +2002,7 @@ class SAVPE(nn.Module):
         self.cv5 = nn.Conv2d(1, self.c, 3, padding=1)
         self.cv6 = nn.Sequential(Conv(2 * self.c, self.c, 3), nn.Conv2d(self.c, self.c, 3, padding=1))
 
-    def forward(self, x: list[torch.Tensor], vp: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: List[torch.Tensor], vp: torch.Tensor) -> torch.Tensor:
         """Process input features and visual prompts to generate enhanced embeddings."""
         y = [self.cv2[i](xi) for i, xi in enumerate(x)]
         y = self.cv4(torch.cat(y, dim=1))
@@ -2025,7 +2025,66 @@ class SAVPE(nn.Module):
         vp = vp.reshape(B, Q, 1, -1)
 
         score = y * vp + torch.logical_not(vp) * torch.finfo(y.dtype).min
-        score = F.softmax(score, dim=-1).to(y.dtype)
+
+        score = F.softmax(score, dim=-1, dtype=torch.float).to(score.dtype)
+
         aggregated = score.transpose(-2, -3) @ x.reshape(B, self.c, C // self.c, -1).transpose(-1, -2)
 
         return F.normalize(aggregated.transpose(-2, -3).reshape(B, Q, -1), dim=-1, p=2)
+
+
+# =================================================================================
+# ========================= INICIO: BLOQUES CON CoordAtt ==========================
+# =================================================================================
+
+class BottleneckCA(nn.Module):
+    """Standard Bottleneck with Coordinate Attention."""
+
+    def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):
+        """
+        Initializes a Bottleneck module with CoordAtt.
+        
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels.
+            shortcut (bool): Use shortcut connection.
+            g (int): Groups for convolutions.
+            e (float): Expansion factor.
+        """
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, c_, 1, 1)
+        self.cv2 = Conv(c_, c2, 3, 1, g=g)
+        self.ca = CoordAtt(c2, c2) # El módulo de atención se aplica después del cuello de botella
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        """Forward pass applying bottleneck, attention, and shortcut."""
+        out = self.cv2(self.cv1(x))
+        out = self.ca(out) # Aplicar atención
+        return x + out if self.add else out
+
+
+class C3CA(C3):
+    """C3 module with BottleneckCA()."""
+
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
+        """
+        Initialize C3 module with BottleneckCA.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels.
+            n (int): Number of bottleneck blocks.
+            shortcut (bool): Whether to use shortcut connections in C3.
+            g (int): Groups for convolutions.
+            e (float): Expansion ratio.
+        """
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)  # hidden channels
+        # Reemplazamos el bloque de Bottlenecks estándar por nuestro Bottleneck con atención
+        self.m = nn.Sequential(*(BottleneckCA(c_, c_, shortcut=True, g=g, e=1.0) for _ in range(n)))
+
+# =================================================================================
+# ========================== FIN: BLOQUES CON CoordAtt ============================
+# =================================================================================

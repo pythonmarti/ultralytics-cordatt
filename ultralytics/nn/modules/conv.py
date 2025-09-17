@@ -1,14 +1,16 @@
+# ultralytics/nn/modules/conv.py
+
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Convolution modules."""
 
-from __future__ import annotations
-
 import math
+from typing import List
 
 import numpy as np
 import torch
 import torch.nn as nn
 
+# __all__ se ha actualizado para eliminar CBAM y añadir CoordAtt
 __all__ = (
     "Conv",
     "Conv2",
@@ -18,9 +20,7 @@ __all__ = (
     "ConvTranspose",
     "Focus",
     "GhostConv",
-    "ChannelAttention",
-    "SpatialAttention",
-    "CBAM",
+    "CoordAtt",  # <-- MÓDULO DE COORDINATE ATTENTION AÑADIDO
     "Concat",
     "RepConv",
     "Index",
@@ -310,7 +310,6 @@ class Focus(nn.Module):
         """
         super().__init__()
         self.conv = Conv(c1 * 4, c2, k, s, p, g, act=act)
-        # self.contract = Contract(gain=2)
 
     def forward(self, x):
         """
@@ -325,7 +324,6 @@ class Focus(nn.Module):
             (torch.Tensor): Output tensor.
         """
         return self.conv(torch.cat((x[..., ::2, ::2], x[..., 1::2, ::2], x[..., ::2, 1::2], x[..., 1::2, 1::2]), 1))
-        # return self.conv(self.contract(x))
 
 
 class GhostConv(nn.Module):
@@ -539,119 +537,6 @@ class RepConv(nn.Module):
             self.__delattr__("id_tensor")
 
 
-class ChannelAttention(nn.Module):
-    """
-    Channel-attention module for feature recalibration.
-
-    Applies attention weights to channels based on global average pooling.
-
-    Attributes:
-        pool (nn.AdaptiveAvgPool2d): Global average pooling.
-        fc (nn.Conv2d): Fully connected layer implemented as 1x1 convolution.
-        act (nn.Sigmoid): Sigmoid activation for attention weights.
-
-    References:
-        https://github.com/open-mmlab/mmdetection/tree/v3.0.0rc1/configs/rtmdet
-    """
-
-    def __init__(self, channels: int) -> None:
-        """
-        Initialize Channel-attention module.
-
-        Args:
-            channels (int): Number of input channels.
-        """
-        super().__init__()
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Conv2d(channels, channels, 1, 1, 0, bias=True)
-        self.act = nn.Sigmoid()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Apply channel attention to input tensor.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            (torch.Tensor): Channel-attended output tensor.
-        """
-        return x * self.act(self.fc(self.pool(x)))
-
-
-class SpatialAttention(nn.Module):
-    """
-    Spatial-attention module for feature recalibration.
-
-    Applies attention weights to spatial dimensions based on channel statistics.
-
-    Attributes:
-        cv1 (nn.Conv2d): Convolution layer for spatial attention.
-        act (nn.Sigmoid): Sigmoid activation for attention weights.
-    """
-
-    def __init__(self, kernel_size=7):
-        """
-        Initialize Spatial-attention module.
-
-        Args:
-            kernel_size (int): Size of the convolutional kernel (3 or 7).
-        """
-        super().__init__()
-        assert kernel_size in {3, 7}, "kernel size must be 3 or 7"
-        padding = 3 if kernel_size == 7 else 1
-        self.cv1 = nn.Conv2d(2, 1, kernel_size, padding=padding, bias=False)
-        self.act = nn.Sigmoid()
-
-    def forward(self, x):
-        """
-        Apply spatial attention to input tensor.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            (torch.Tensor): Spatial-attended output tensor.
-        """
-        return x * self.act(self.cv1(torch.cat([torch.mean(x, 1, keepdim=True), torch.max(x, 1, keepdim=True)[0]], 1)))
-
-
-class CBAM(nn.Module):
-    """
-    Convolutional Block Attention Module.
-
-    Combines channel and spatial attention mechanisms for comprehensive feature refinement.
-
-    Attributes:
-        channel_attention (ChannelAttention): Channel attention module.
-        spatial_attention (SpatialAttention): Spatial attention module.
-    """
-
-    def __init__(self, c1, kernel_size=7):
-        """
-        Initialize CBAM with given parameters.
-
-        Args:
-            c1 (int): Number of input channels.
-            kernel_size (int): Size of the convolutional kernel for spatial attention.
-        """
-        super().__init__()
-        self.channel_attention = ChannelAttention(c1)
-        self.spatial_attention = SpatialAttention(kernel_size)
-
-    def forward(self, x):
-        """
-        Apply channel and spatial attention sequentially to input tensor.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            (torch.Tensor): Attended output tensor.
-        """
-        return self.spatial_attention(self.channel_attention(x))
-
-
 class Concat(nn.Module):
     """
     Concatenate a list of tensors along specified dimension.
@@ -670,12 +555,12 @@ class Concat(nn.Module):
         super().__init__()
         self.d = dimension
 
-    def forward(self, x: list[torch.Tensor]):
+    def forward(self, x: List[torch.Tensor]):
         """
         Concatenate input tensors along specified dimension.
 
         Args:
-            x (list[torch.Tensor]): List of input tensors.
+            x (List[torch.Tensor]): List of input tensors.
 
         Returns:
             (torch.Tensor): Concatenated tensor.
@@ -701,14 +586,101 @@ class Index(nn.Module):
         super().__init__()
         self.index = index
 
-    def forward(self, x: list[torch.Tensor]):
+    def forward(self, x: List[torch.Tensor]):
         """
         Select and return a particular index from input.
 
         Args:
-            x (list[torch.Tensor]): List of input tensors.
+            x (List[torch.Tensor]): List of input tensors.
 
         Returns:
             (torch.Tensor): Selected tensor.
         """
         return x[self.index]
+
+
+# =================================================================================
+# ======================== INICIO: MÓDULO COORDINATE ATTENTION ========================
+# =================================================================================
+
+class h_sigmoid(nn.Module):
+    """Class for h_sigmoid activation function."""
+
+    def __init__(self, inplace=True):
+        """Initializes the h_sigmoid class."""
+        super().__init__()
+        self.relu = nn.ReLU6(inplace=inplace)
+
+    def forward(self, x):
+        """Applies the h_sigmoid activation function to the input tensor."""
+        return self.relu(x + 3) / 6
+
+
+class h_swish(nn.Module):
+    """Class for h_swish activation function."""
+
+    def __init__(self, inplace=True):
+        """Initializes the h_swish class."""
+        super().__init__()
+        self.sigmoid = h_sigmoid(inplace=inplace)
+
+    def forward(self, x):
+        """Applies the h_swish activation function to the input tensor."""
+        return x * self.sigmoid(x)
+
+
+class CoordAtt(nn.Module):
+    """
+    Coordinate Attention module.
+
+    Ref: https://github.com/houqb/CoordAttention
+    """
+
+    def __init__(self, c1, c2, reduction=32):
+        """
+        Initializes the Coordinate Attention module.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels (must be the same as c1).
+            reduction (int): Reduction factor for the intermediate channels.
+        """
+        super().__init__()
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+        
+        # Aseguramos que los canales de entrada y salida son los mismos
+        assert c1 == c2, f"CoordAtt input and output channels must be the same, but got c1={c1} and c2={c2}"
+        
+        mip = max(8, c1 // reduction)
+        self.conv1 = nn.Conv2d(c1, mip, 1, 1, 0)
+        self.bn1 = nn.BatchNorm2d(mip)
+        self.act = h_swish()
+        self.conv_h = nn.Conv2d(mip, c1, 1, 1, 0)
+        self.conv_w = nn.Conv2d(mip, c1, 1, 1, 0)
+
+    def forward(self, x):
+        """Forward pass of the Coordinate Attention module."""
+        identity = x
+        n, c, h, w = x.shape
+        
+        x_h = self.pool_h(x)
+        x_w = self.pool_w(x).permute(0, 1, 3, 2)
+        
+        y = torch.cat([x_h, x_w], dim=2)
+        y = self.conv1(y)
+        y = self.bn1(y)
+        y = self.act(y)
+        
+        x_h, x_w = torch.split(y, [h, w], dim=2)
+        x_w = x_w.permute(0, 1, 3, 2)
+        
+        a_h = self.conv_h(x_h).sigmoid()
+        a_w = self.conv_w(x_w).sigmoid()
+        
+        out = identity * a_w * a_h
+        return out
+
+# =================================================================================
+# ========================= FIN: MÓDULO COORDINATE ATTENTION ==========================
+# =================================================================================
